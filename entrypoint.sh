@@ -1,7 +1,11 @@
 #!/bin/bash -l
 
-echo $@
+# echo $@
 
-echo $(</dev/stdin)
+ruby /app/stretcher.rb $@ > /app/input.jl
 
-ruby -v
+# cat /app/input.jl
+
+/usr/local/julia/bin/julia -q -J/install/SysImage.so /app/input.jl > result
+
+ruby /app/translate.rb result

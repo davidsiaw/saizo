@@ -1,3 +1,5 @@
+require 'set'
+
 module ComparableType
     %i[>= <= == < > * / + -].each do |op|
       define_method op do |rhs|
@@ -128,6 +130,123 @@ module ComparableType
       name
     end
   end
+
+  class ItemDSL
+    def initialize(itemname)
+      @itemname = itemname
+      @info = {}
+    end
+
+    def method_missing(name, *args)
+      @info[name] = args[0]
+    end
+
+    def item
+      Item.new(@itemname, @info)
+    end
+  end
+
+  class Item
+    attr_reader :name
+
+    # hardened item
+    def initialize(name, info)
+      @name = name
+      @info = info
+    end
+
+    def method_missing(name)
+      if @info.key? name
+        return @info[name]
+      end
+
+      super
+    end
+
+    def respond_to?(name)
+      return true if @info.key? name
+
+      false
+    end
+
+    def properties
+      @info.keys
+    end
+
+    def to_s
+      "<Item #{@name} #{@info.to_s}>"
+    end
+  end
+
+  class Pouch
+    def initialize(clumpname, itemlist)
+      @clumpname = clumpname
+      @itemlist = itemlist
+    end
+
+    def apply(dsl)
+      properties = {}
+      @itemlist.each_with_index do |item, index|
+        if item.is_a? Item
+          item_name = :"#{@clumpname}_#{item.name}"
+          dsl.var dsl.send(item_name), Int >= 0
+
+          item.properties.each do |prop|
+            properties[prop] ||= []
+            properties[prop] << {
+              propname: item_name,
+              item: item
+            }
+          end
+
+        elsif item.is_a? Slot
+          slot = item
+
+          full = 0
+
+          slot.itemlist.each do |item|
+            slot_item_name = :"#{@clumpname}_slot#{index}_#{slot.name}_#{item.name}"
+
+            dsl.var dsl.send(slot_item_name), Int >= 0
+            dsl.constraint dsl.send(slot_item_name) <= 1
+
+            full = dsl.send(slot_item_name) + full
+
+            item.properties.each do |prop|
+              properties[prop] ||= []
+              properties[prop] << {
+                propname: slot_item_name,
+                item: item
+              }
+            end
+          end
+
+          dsl.constraint full <= 1
+        end
+      end
+
+      properties.each do |propname, iteminfolist|
+        define_singleton_method :"#{propname}_sum" do
+          sum = Sym.new(iteminfolist[0][:propname]) * iteminfolist[0][:item].send(:"#{propname}")
+          z = iteminfolist[1..-1].each do |iteminfo|
+            sum = sum + Sym.new(iteminfo[:propname]) * iteminfo[:item].send(:"#{propname}")
+          end
+          sum
+        end
+      end
+
+
+    end
+  end
+
+  class Slot
+    attr_reader :itemlist, :name
+
+    def initialize(name, itemlist)
+      @name = name.to_s
+      @itemlist = itemlist
+    end
+  end
   
   class DSL
     def initialize
@@ -137,9 +256,40 @@ module ComparableType
       @action = nil
       @shows = {}
       @options = {}
+
+      @items = {}
+      @slots = {}
+      @clumps = {}
+    end
+
+    def item(namesym, &block)
+      namestring = namesym.to_s
+
+      raise "#{namestring} already exists" if @items.key?(namestring)
+
+      itemdsl = ItemDSL.new(namestring)
+      itemdsl.instance_eval(&block)
+      # $stderr.puts itemdsl.item
+      @items[namestring] = itemdsl.item
+    end
+
+    def choice(slotname, *items)
+      # create a slot for choice of items
+      slot = Slot.new(slotname.to_s, items)
+      @slots[slotname.to_s.to_sym] = slot
+    end
+
+    def pouch(clumpname, *items)
+      clump = Pouch.new(clumpname.to_s, items)
+      clump.apply(self)
+      @clumps[clumpname.to_s.to_sym] = clump
     end
   
     def method_missing(name, *args)
+      return @clumps[name] if @clumps.key? name
+      return @items[name] if @items.key? name
+      return @slots[name] if @slots.key? name
+
       Sym.new(name)
     end
   
@@ -194,19 +344,25 @@ module ComparableType
     def genpvar
       @variables.map do |k,v|
         if v.lhs.name.to_s == 'Int'
-          %{println("#{k.name} = ", convert(BigInt, round(value(#{k.name}))))}
+          %{println("#var##{k.name}=", convert(BigInt, round(value(#{k.name}))))}
         else
-          %{println("#{k.name} = ", value(#{k.name}))}
+          %{println("#var##{k.name}=", value(#{k.name}))}
         end
       end.join("\n")
     end
   
+    def genshowconstraints
+      @constraints.each_with_index.map do |c, i|
+        %{println("#constraint#con#{i}=", value(#{c.lhs.to_s}))}
+      end.join("\n")
+    end
+
     def genshows
       @shows.map do |k,v|
         if v[:type] == :int
-          %{println("#{k} = ", convert(BigInt, round(value(#{v[:expr].to_s}))))}
+          %{println("#show##{k}=", convert(BigInt, round(value(#{v[:expr].to_s}))))}
         else
-          %{println("#{k} = ", value(#{v[:expr].to_s}))}
+          %{println("#show##{k}=", value(#{v[:expr].to_s}))}
         end
       end.join("\n")
     end
@@ -214,9 +370,10 @@ module ComparableType
     def genoutput
       <<~OUTPUT
         #{genpvar}
+        #{genshowconstraints}
         #{genshows}
   
-        println("Result: ", objective_value(m))
+        println("#top#result=", objective_value(m))
       OUTPUT
     end
   

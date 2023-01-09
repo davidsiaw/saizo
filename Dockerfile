@@ -32,6 +32,7 @@ ADD stretcher.rb /app/stretcher.rb
 ADD entrypoint.rb /app/entrypoint.rb
 ADD entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+ADD translate.rb /app/translate.rb
 
 #ENTRYPOINT [ "/bin/bash", "-l" ]
 ENTRYPOINT [ "/entrypoint.sh" ]
