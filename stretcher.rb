@@ -249,6 +249,7 @@ module ComparableType
   end
   
   class DSL
+
     def initialize
       @variables = {}
       @constraints = []
@@ -260,6 +261,11 @@ module ComparableType
       @items = {}
       @slots = {}
       @clumps = {}
+      @engine = 'HiGHS'
+    end
+
+    def setengine(engine)
+      @engine = engine
     end
 
     def item(namesym, &block)
@@ -312,6 +318,10 @@ module ComparableType
     end
   
     def time_limit_secs(secs)
+      if @engine != 'Cbc'
+        $stderr.puts "time_limit_secs Works only on Cbc. Using #{@engine} so ignoring"
+        return
+      end
       @options['seconds'] = secs
     end
   
@@ -420,9 +430,9 @@ module ComparableType
     def gen
       <<~CONTENT
         using JuMP
-        using Cbc
+        using #{@engine}
   
-        m = Model(Cbc.Optimizer)
+        m = Model(#{@engine}.Optimizer)
         #{genoptions}
   
         #{genvars}
